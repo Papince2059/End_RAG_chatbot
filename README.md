@@ -97,3 +97,10 @@ Here is a breakdown of the key components and files in the repository:
 
 ---
 *Built with ❤️ for Homeopathy & AI.*
+
+
+## Output Screenshot
+
+![Output](https://github.com/user-attachments/assets/74de92ae-e879-4cc5-8943-f55c92a88c0d)
+
+
