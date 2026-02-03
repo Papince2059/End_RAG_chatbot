@@ -8,11 +8,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # Mount the existing volume where your embeddings are stored
-      - rag-chatbot_endee_data:/data
+      - rag-chatbot_endee-data:/data
     restart: always
 
-  # 2. Backend API (Python/FastAPI)
+  # 2. Backend API
   backend:
     build:
       context: ./backend
@@ -20,26 +19,23 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ENDEE_HOST=endee # Internal docker network host
+      - ENDEE_HOST=endee
       - ENDEE_PORT=8080
     depends_on:
       - endee
     restart: always
 
-  # 3. Frontend (Static Web App)
+  # 3. Frontend
   frontend:
     build:
       context: ./frontend
     container_name: rag-chatbot-frontend
     ports:
-      # Mapping container port 80 (Nginx default) to 3000 on your machine
-      # (Changing from 8501 to avoid confusion with Streamlit)
       - "3000:80"
     depends_on:
       - backend
     restart: always
 
-# Reuse the existing named volume
 volumes:
-  rag-chatbot_endee_data:
+  rag-chatbot_endee-data:
     external: true

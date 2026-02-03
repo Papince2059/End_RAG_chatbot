@@ -13,6 +13,7 @@ from endee import Endee
 from sentence_transformers import SentenceTransformer
 import time
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -79,7 +80,17 @@ async def startup_event():
     
     try:
         logger.info("Initializing Endee client...")
+        # Endee SDK v0.1.8 doesn't accept host/port in constructor
+        # We must manually override the base_url for Docker networking
         endee_client = Endee()
+        
+        host = os.getenv("ENDEE_HOST", "localhost")
+        port = os.getenv("ENDEE_PORT", "8080")
+        
+        # Force the connection URL
+        new_url = f"http://{host}:{port}/api/v1"
+        endee_client.base_url = new_url
+        logger.info(f"Connected to Endee at: {new_url}")
         
         logger.info(f"Loading embedding model: {EMBEDDING_MODEL}...")
         embedding_model = SentenceTransformer(EMBEDDING_MODEL)
