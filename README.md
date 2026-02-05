@@ -110,5 +110,5 @@ Make sure Endee is running and reachable at `http://localhost:8080`.
 - Gemini model selection updated to valid models for your API key.
 
 ## Output Screenshot
+![Output Screenshot](https://github.com/user-attachments/assets/785674bf-b42b-4435-8e79-e97f63c6a38f)
 
-![Output](https://github.com/user-attachments/assets/74de92ae-e879-4cc5-8943-f55c92a88c0d)
