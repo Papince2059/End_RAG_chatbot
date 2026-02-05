@@ -15,6 +15,8 @@ const errorMessage = document.getElementById('errorMessage');
 const totalRemedies = document.getElementById('totalRemedies');
 const statusIndicator = document.getElementById('status');
 const suggestionChips = document.querySelectorAll('.suggestion-chip');
+const answerSection = document.getElementById('answerSection');
+const answerText = document.getElementById('answerText');
 
 // ===== Initialize =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -80,27 +82,15 @@ async function performSearch() {
     showLoading();
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/search`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                query: query,
-                top_k: 10
-            })
-        });
+        // 1) Try /api/chat (Gemini + RAG)
+        let data = await fetchChat(query);
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Search failed');
+        // 2) Fallback to /api/search if chat is unavailable
+        if (!data) {
+            data = await fetchSearch(query);
         }
 
-        const data = await response.json();
-
-        // Display results
         displayResults(data);
-
     } catch (error) {
         console.error('Search error:', error);
         showError(error.message);
@@ -113,26 +103,86 @@ function displayResults(data) {
     hideAllStates();
 
     // Update metadata
-    resultsCount.textContent = data.total_results;
-    queryTime.textContent = data.query_time_ms.toFixed(0);
+    // Update metadata (supports chat or search responses)
+    const sources = data.sources || data.results || [];
+    resultsCount.textContent = sources.length;
+    queryTime.textContent = "---"; // Chat endpoint doesn't return time yet, or we can add it
 
     // Clear previous results
     resultsGrid.innerHTML = '';
 
-    // Check if we have results
-    if (data.results.length === 0) {
+    // Check if we have response data
+    if (!sources || sources.length === 0) {
         showEmpty();
         return;
     }
 
-    // Create remedy cards
-    data.results.forEach((remedy, index) => {
+    // 1. Show Answer
+    if (data.answer) {
+        // Simple markdown-ish bold replacement
+        let formattedAnswer = data.answer.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        answerText.innerHTML = formattedAnswer;
+        answerSection.style.display = 'block';
+    }
+
+    // 2. Create remedy cards (Sources)
+    sources.forEach((remedy, index) => {
         const card = createRemedyCard(remedy, index);
         resultsGrid.appendChild(card);
     });
 
     // Show results section
     resultsSection.style.display = 'block';
+}
+
+// ===== API Calls =====
+async function fetchChat(query) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: query,
+                history: []
+            })
+        });
+
+        if (!response.ok) {
+            // Gracefully fall back on known Gemini failures
+            if (response.status === 503) {
+                return null;
+            }
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Chat failed');
+        }
+
+        return await response.json();
+    } catch (error) {
+        // Network or parsing error -> fallback
+        return null;
+    }
+}
+
+async function fetchSearch(query) {
+    const response = await fetch(`${API_BASE_URL}/api/search`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            query: query,
+            top_k: 5
+        })
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Search failed');
+    }
+
+    return await response.json();
 }
 
 // ===== Create Remedy Card =====
@@ -197,6 +247,7 @@ function showError(message) {
 
 function hideAllStates() {
     resultsSection.style.display = 'none';
+    answerSection.style.display = 'none';
     loadingState.style.display = 'none';
     emptyState.style.display = 'none';
     errorState.style.display = 'none';

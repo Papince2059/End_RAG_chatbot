@@ -1,106 +1,114 @@
-﻿# Endee RAG Chatbot - Homeopathy Assistant
+# Endee RAG Chatbot - Homeopathy Assistant
 
-A high-performance Retrieval-Augmented Generation (RAG) system dedicated to homeopathy, built using the Endee Vector Database, FastAPI, and a modern frontend.
+A Retrieval-Augmented Generation (RAG) system for homeopathy remedies, built with Endee Vector DB, FastAPI, and a modern web UI.
 
-## 🚀 Project Overview
+## What This App Does
 
-This project provides a semantic search interface for finding homeopathic remedies based on symptoms. It leverages:
-- **Endee Vector Database**: For efficient storage and retrieval of vector embeddings.
-- **Sentence Transformers**: For generating high-quality text embeddings (`all-MiniLM-L6-v2`).
-- **FastAPI Backend**: A robust API handling search logic and database communication.
-- **Dockerized Architecture**: Fully containerized for easy deployment.
+- Ingests remedy text into Endee as vector embeddings.
+- Accepts symptom queries from the UI.
+- Retrieves the top-k most similar remedies from Endee.
+- Uses Gemini to summarize the top results and answer the query.
+- Falls back to pure vector search if Gemini is unavailable.
 
-## 📂 Project Structure & File Roles
+## Live Ports (Docker Compose)
 
-Here is a breakdown of the key components and files in the repository:
+- Frontend: `http://localhost:3001`
+- Backend: `http://localhost:8000`
+- Endee: `http://localhost:8080`
 
-### 1. Root Directory
-- **`docker-compose.yml`**: The orchestration file. It defines three services:
-    - `endee`: The vector database server.
-    - `backend`: The Python API service.
-    - `frontend`: The Nginx-based web interface.
-- **`README.md`**: This documentation file.
+## Project Structure
 
-### 2. Backend (`/backend`)
-- **`main.py`**: The core application logic.
-    - Initializes the connection to the Endee database.
-    - Loads the embedding model.
-    - Exposes the `/api/search` endpoint.
-    - *Crucial Update*: Manually configures the Endee SDK to connect via `http://endee:8080/api/v1` for Docker compatibility.
-- **`Dockerfile`**: Defines the environment for the Python backend (Python 3.10, dependencies).
-- **`requirements.txt`**: Lists Python dependencies (`fastapi`, `uvicorn`, `endee`, `sentence-transformers`).
+**Root**
+- `docker-compose.yml` defines the Endee, backend, and frontend services.
+- `.env` provides the Gemini API key and Endee host/port.
+- `README.md` this guide.
 
-### 3. Frontend (`/frontend`)
-- **`index.html`**: The main user interface. A clean, responsive search page.
-- **`app.js`**: Client-side logic that captures user input, calls the backend API, and renders results.
-- **`Dockerfile`**: Uses Nginx to serve the static files on port 80 (mapped to 3000).
+**Backend (`backend/`)**
+- `main.py` FastAPI app with `/api/search` and `/api/chat`.
+- `ingest.py` ingestion script (Endee SDK + embeddings).
+- `Dockerfile` Python runtime and dependencies.
+- `requirements.txt` Python dependencies.
 
-### 4. Data & Scripts (`/data`, `/scripts`)
-- **`data/symptom_remedy_examples.txt`**: The source dataset containing symptoms and their corresponding remedies.
-- **`scripts/chunk_remedies.py`**: A utility script to parse the raw text data into structured chunks suitable for embedding.
-- **`scripts/ingest_remedies_to_endee.py`**: The ingestion script that:
-    1. Reads the chunked data.
-    2. Generates embeddings using the local model.
-    3. Uploads vectors to the Endee database.
+**Frontend (`frontend/`)**
+- `index.html` UI layout.
+- `app.js` API calls and rendering.
+- `styles.css` styling.
+- `Dockerfile` Nginx static server.
 
-## 🔄 Project Sequence: How It Works
+**Data (`data/`)**
+- `remedy_chunks.json` pre-chunked remedy data.
+- `boericke_full_text.txt` raw source text.
+- `symptom_remedy_examples.txt` sample symptom queries.
 
-1.  **Data Ingestion (Pre-computation)**:
-    - Raw text is processed by script.
-    - Embeddings are generated and stored in the persistent volume `rag-chatbot_endee_data`.
-    *(Note: This is already done for you!)*
+**Scripts (`scripts/`)**
+- `chunk_remedies.py` builds `remedy_chunks.json`.
+- `ingest_remedies_to_endee_sdk.py` ingestion script (SDK variant).
 
-2.  **Service Startup**:
-    - `docker compose up` starts all three containers.
-    - **Endee** starts and loads the `homeopathy_remedies` index.
-    - **Backend** waits for Endee, then initializes the SDK and connection.
-    - **Frontend** serves the UI.
+## End-to-End Flow
 
-3.  **Search Flow**:
-    - User types a symptom (e.g., "headache") in the UI.
-    - Frontend sends a POST request to `localhost:8000/api/search`.
-    - Backend converts "headache" into a vector embedding.
-    - Backend queries Endee for the nearest semantic matches.
-    - Endee returns the top matching remedies.
-    - Backend formats the response and sends it back to the UI.
-    - UI displays the remedies, similarity scores, and details.
+1. Ingestion (one-time or when data changes)
+- Chunk text into remedy chunks.
+- Embed each chunk with `all-MiniLM-L6-v2`.
+- Upsert vectors + metadata into Endee (`homeopathy_remedies` index).
 
-## 🛠️ How to Run
+2. Query
+- UI sends query to backend.
+- Backend embeds query and retrieves top-k from Endee.
 
-### Prerequisites
-- Docker & Docker Compose installed.
+3. RAG Answer
+- Backend builds a prompt from retrieved chunks.
+- Gemini produces a short summary + final answer.
+- UI shows the summary above the top results.
 
-### Steps
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/Papince2059/End_RAG_chatbot.git
-    cd End_RAG_chatbot
-    ```
+## API Endpoints
 
-2.  **Start the Application**
-    ```bash
-    docker compose up -d
-    ```
-    *Wait a few moments for the "Backend initialized successfully" log.*
+- `GET /` health check.
+- `GET /api/stats` index status.
+- `POST /api/search` vector search only.
+- `POST /api/chat` vector search + Gemini summary/answer.
 
-3.  **Access the App**
-    - Open your browser to: **[http://localhost:3000](http://localhost:3000)**
+## How To Run (Docker)
 
-4.  **Stop the Application**
-    ```bash
-    docker compose down
-    ```
+1. Set environment variables
+- Update `.env` with your `GEMINI_API_KEY`.
 
-## 🐛 Troubleshooting & Debugging History
-- **Endee Connection**: The backend was modified to explicitly set `endee_client.base_url = "http://endee:8080/api/v1"` to resolve connectivity issues within the Docker network.
-- **Port Mapping**: Frontend is mapped to `3000`, Backend to `8000`, Endee to `8080`.
+2. Start services
+```bash
+docker compose up -d
+```
 
----
-*Built with ❤️ for Homeopathy & AI.*
+3. Open the app
+- `http://localhost:3001`
 
+4. Stop services
+```bash
+docker compose down
+```
+
+## Ingestion
+
+If you change the source text or want to rebuild the index:
+
+```bash
+python backend/ingest.py
+```
+
+Make sure Endee is running and reachable at `http://localhost:8080`.
+
+## Notes & Troubleshooting
+
+- Backend uses `http://endee:8080/api/v1` inside Docker.
+- If Gemini is unavailable, the UI automatically falls back to `/api/search`.
+- If you only see results and no summary, check `GEMINI_API_KEY` and backend logs.
+- Frontend runs on port `3001` because port `3000` was already in use.
+
+## Recent Changes
+
+- Frontend port mapped to `3001:80` in `docker-compose.yml`.
+- Frontend now falls back to `/api/search` if `/api/chat` fails.
+- Gemini prompt updated to include a short summary above results.
+- Gemini model selection updated to valid models for your API key.
 
 ## Output Screenshot
 
 ![Output](https://github.com/user-attachments/assets/74de92ae-e879-4cc5-8943-f55c92a88c0d)
-
-

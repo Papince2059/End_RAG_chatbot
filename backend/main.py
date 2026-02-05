@@ -11,9 +11,15 @@ from pydantic import BaseModel
 from typing import List, Optional
 from endee import Endee
 from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+from dotenv import load_dotenv
 import time
 import logging
 import os
+
+# Load environment variables
+load_dotenv()
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,12 +48,23 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 endee_client = None
 embedding_model = None
 index = None
+gemini_model = None
+GEMINI_MODEL_FALLBACKS = [
+    "models/gemini-flash-latest",
+    "models/gemini-pro-latest",
+    "models/gemini-2.0-flash",
+    "models/gemini-2.5-flash",
+]
 
 
 # Pydantic models for request/response validation
 class SearchRequest(BaseModel):
     query: str
     top_k: Optional[int] = 5
+
+class ChatRequest(BaseModel):
+    query: str
+    history: Optional[List[dict]] = []
 
 
 class RemedyResult(BaseModel):
@@ -65,6 +82,11 @@ class SearchResponse(BaseModel):
     total_results: int
 
 
+class ChatResponse(BaseModel):
+    answer: str
+    sources: List[RemedyResult]
+
+
 class StatsResponse(BaseModel):
     total_remedies: int
     index_name: str
@@ -76,7 +98,7 @@ class StatsResponse(BaseModel):
 # Startup event - initialize models
 @app.on_event("startup")
 async def startup_event():
-    global endee_client, embedding_model, index
+    global endee_client, embedding_model, index, gemini_model
     
     try:
         logger.info("Initializing Endee client...")
@@ -96,12 +118,25 @@ async def startup_event():
         embedding_model = SentenceTransformer(EMBEDDING_MODEL)
         
         logger.info(f"Getting index: {INDEX_NAME}...")
+        logger.info(f"Getting index: {INDEX_NAME}...")
         index = endee_client.get_index(name=INDEX_NAME)
-        
+
+        logger.info("Initializing Gemini...")
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.warning("GEMINI_API_KEY not found in .env, chat endpoint may fail")
+        else:
+            genai.configure(api_key=api_key)
+            # Default model (fallbacks are attempted at request time if needed)
+            gemini_model = genai.GenerativeModel(GEMINI_MODEL_FALLBACKS[0])
+
         logger.info("DONE: Backend initialized successfully")
     except Exception as e:
         logger.error(f"ERROR: Failed to initialize backend: {e}")
-        raise
+        # raise  <-- Commented out to prevent crash
+        logger.error("Keeping container alive for debugging/ingestion...")
+        while True:
+            time.sleep(60)
 
 
 # Health check endpoint
@@ -220,6 +255,73 @@ async def get_stats():
     except Exception as e:
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+# Chat endpoint (RAG)
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_with_remedies(request: ChatRequest):
+    """
+    RAG Chat endpoint using Gemini
+    """
+    try:
+        if not gemini_model:
+            raise HTTPException(status_code=503, detail="Gemini model not initialized. Check server logs/API key.")
+
+        # 1. Search for relevant remedies
+        search_request = SearchRequest(query=request.query, top_k=5)
+        search_res = await search_remedies(search_request) # Re-use search logic effectively
+        
+        # 2. Construct Prompt context
+        context_text = ""
+        for idx, res in enumerate(search_res.results):
+            context_text += f"Remedy {idx+1}: {res.remedy_name}\n"
+            context_text += f"{res.text_preview}\n"
+            if res.full_text:
+                 context_text += f"Full Text Snippet: {res.full_text[:500]}...\n"
+            context_text += "---\n"
+
+        prompt = f"""
+        You are a helpful Homeopathy Assistant. Use ONLY the context below.
+
+        Task:
+        1) Summarize the top matching remedies in 3-5 short bullet points.
+        2) Then give a concise final answer to the user's question.
+
+        Requirements:
+        - Cite remedy names you used.
+        - If the answer is not in the context, say so.
+
+        Context:
+        {context_text}
+
+        User Question: {request.query}
+        """
+
+        # 3. Generate Answer with model fallbacks
+        last_error = None
+        response = None
+        for model_name in GEMINI_MODEL_FALLBACKS:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                break
+            except Exception as e:
+                last_error = e
+                continue
+
+        if response is None:
+            raise HTTPException(status_code=500, detail=f"Chat generation failed: {last_error}")
+        
+        return ChatResponse(
+            answer=response.text,
+            sources=search_res.results
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat generation failed: {str(e)}")
 
 
 # Run with: uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
